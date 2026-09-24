@@ -1,5 +1,7 @@
 # SwissCarScout
 
+![SwissCarScout in action](assets/readme-preview.gif)
+
 A Telegram bot and market index for flipping used cars in Switzerland.
 
 The arbitrage is simple: private sellers who underprice mechanically sound cars
