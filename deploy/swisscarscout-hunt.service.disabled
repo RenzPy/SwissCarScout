@@ -1,0 +1,26 @@
+# Continuous hunting loop. NOT INSTALLED BY DEFAULT, because as of now there is
+# nothing useful for it to poll:
+#
+#   tutti       - blocked by Cloudflare from datacenter IPs (see config.yaml)
+#   autoscout24 - dealer inventory at retail; no flips there
+#
+# Sourcing currently comes in through the bot: tutti saved-search emails and
+# Facebook finds, pasted to --listen.
+#
+# If you later enable a source worth polling, rename this to
+# radar-hunt.service, set --source, and install it.
+[Unit]
+Description=car-radar hunting loop
+After=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/car-radar
+EnvironmentFile=/home/ubuntu/car-radar/.env
+ExecStart=/home/ubuntu/car-radar/.venv/bin/python run.py --source CHANGEME --mode buy --loop
+Restart=always
+RestartSec=60
+
+[Install]
+WantedBy=multi-user.target

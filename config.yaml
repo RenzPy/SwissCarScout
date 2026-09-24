@@ -1,0 +1,264 @@
+# ============================================================================
+#  SwissCarScout config
+#  Everything tunable lives here. You should not need to touch the Python.
+# ============================================================================
+
+database: radar.db
+
+politeness:
+  min_delay_s: 3          # seconds between page requests. Do not lower these.
+  max_delay_s: 7
+poll_minutes: 12          # how often --loop re-runs. 10-15 is the sweet spot.
+
+user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36"
+
+# ---------------------------------------------------------------------------
+# Filters
+# ---------------------------------------------------------------------------
+filters:
+  skip_dealers: true            # your margin lives in private sales
+  max_price_chf: 5200           # your working capital, buy mode only
+  few_photos: 4
+  short_body: 200
+  stale_days: 40                # a listing older than this has a tired seller
+  bilingual_regions: ["Biel", "Bienne", "Fribourg", "Freiburg", "Valais", "Wallis", "Murten", "Morat"]
+
+alert_threshold:
+  buy: 6.0
+  broker: 7.0
+alert_cooloff_days: 14          # do not re-alert the same listing for 2 weeks
+
+# ---------------------------------------------------------------------------
+# Price baseline
+# ---------------------------------------------------------------------------
+price:
+  min_comparables: 5            # below this, the price signal stays silent
+  year_window: 3                # comparables within +/- 3 model years
+  # When only dealer listings exist for a model, their median is scaled by
+  # this to estimate the private value. Garage prices carry warranty,
+  # overheads and margin. 0.75 is a starting guess for the Swiss market --
+  # once you have sold a few cars, check it against what you actually got.
+  retail_discount: 0.75
+  km_depreciation_per_10k: 0.04 # 4% value change per 10'000 km, for normalising
+  min_delta: 0.15               # 15% under median before it counts as cheap
+
+# ---------------------------------------------------------------------------
+# Structured facts, where a source states them outright rather than in ad text.
+# Weighted higher than the equivalent keywords because they are evidence, not
+# a phrase that happens to appear.
+# ---------------------------------------------------------------------------
+structured:
+  mfk_valid_months: 24          # Swiss cars past 1st inspection run on 2 years
+  mfk_expired:        {buy: 7, broker: 2}
+  mfk_fresh:          {buy: -1, broker: 0}   # arbitrage already captured
+  accident:           {buy: -5, broker: -1}
+  declared_price_cut: {buy: 2, broker: 4}
+
+# ---------------------------------------------------------------------------
+# Keyword signals. Weight 0 = ignored in that mode.
+# Swiss marketplaces are bilingual, so every group carries FR and DE terms.
+# ---------------------------------------------------------------------------
+keywords:
+  mfk_expired:
+    weight: {buy: 5, broker: 1}
+    terms:
+      - "mfk abgelaufen"
+      - "ohne mfk"
+      - "nicht ab mfk"
+      - "keine mfk"
+      - "mfk fällig"
+      - "ab mfk nach vereinbarung"
+      - "sans expertise"
+      - "non expertisé"
+      - "non expertisee"
+      - "expertise à faire"
+      - "prête à l'expertise"
+      - "pret a l'expertise"
+      - "expertise échue"
+
+  urgency:
+    weight: {buy: 4, broker: 3}
+    terms:
+      - "muss weg"
+      - "schnellverkauf"
+      - "dringend"
+      - "wegen umzug"
+      - "aus zeitmangel"
+      - "keine zeit"
+      - "nachlass"
+      - "urgent"
+      - "doit partir"
+      - "cause départ"
+      - "cause demenagement"
+      - "cause déménagement"
+      - "vente rapide"
+      - "plus le temps"
+
+  negotiable:
+    weight: {buy: 2, broker: 2}
+    terms:
+      - "preis verhandelbar"
+      - "verhandlungsbasis"
+      - "vb"
+      - "prix négociable"
+      - "prix a discuter"
+      - "prix à discuter"
+      - "faire offre"
+
+  documented:
+    weight: {buy: 3, broker: 0}
+    terms:
+      - "serviceheft"
+      - "service lückenlos"
+      - "rechnungen vorhanden"
+      - "zahnriemen"
+      - "steuerkette"
+      - "carnet d'entretien"
+      - "factures"
+      - "chaîne de distribution"
+      - "courroie de distribution"
+
+  # A tuttiPRO badge on a "private" ad means a semi-professional seller.
+  # They are not mispriced and they do not need a broker.
+  seller_tier_pro:
+    weight: {buy: -4, broker: -8}
+    terms: ["__tier_pro__"]        # injected by scoring, not matched in text
+
+  # Things that should pull a buy score DOWN.
+  red_flags:
+    weight: {buy: -6, broker: 0}
+    terms:
+      - "motorschaden"
+      - "getriebeschaden"
+      - "unfallfahrzeug"
+      - "export"
+      - "bastler"
+      - "für ersatzteile"
+      - "moteur hs"
+      - "boîte hs"
+      - "pour pièces"
+      - "accidenté"
+      - "rost"
+      - "rouille"
+
+# ---------------------------------------------------------------------------
+# Non-keyword signal weights
+# ---------------------------------------------------------------------------
+weights:
+  buy:
+    underpriced: 4
+    few_photos: 2
+    short_body: 1.5
+    stale: 1.5
+    price_drop: 2.5
+    single_language: 1
+  broker:
+    overpriced: 3
+    few_photos: 2.5
+    short_body: 2
+    stale: 3
+    price_drop: 2.5
+    single_language: 3.5
+
+# ---------------------------------------------------------------------------
+# Searches to run
+# ---------------------------------------------------------------------------
+# Paste your own tutti.ch search URLs here. Set the filters on the site
+# (region, category, price ceiling, "Privat/Particulier"), then copy the
+# address bar. The token at the end encodes every filter you chose.
+# AutoScout24 searches take their own block (different filter vocabulary).
+# ---------------------------------------------------------------------------
+# Deal maths (/deal, /bought). Both are guesses until your ledger says
+# otherwise -- /ledger reports how far off the estimates were after each sale.
+# ---------------------------------------------------------------------------
+deal:
+  expected_costs: 450     # MFK ~150, cleaning ~100, reserve ~200
+  target_margin: 0.20     # "pay at most" is set so this margin survives
+
+# ---------------------------------------------------------------------------
+# Market index (--index). This is NOT deal flow: it is the reference price
+# every score is measured against.
+#
+# The range runs to 30'000 on purpose. An S5 B8 cabrio is CHF 18-25k, so a
+# ceiling of 12'000 meant the car this whole project exists to buy had no
+# comparables and never would.
+#
+# Bands rotate: each run sweeps the ones least recently swept, so runs stop
+# re-reading the same cheapest cars. 19 bands at 4 per run = whole market
+# covered every 5 nights.
+# ---------------------------------------------------------------------------
+index:
+  price_from: 1500
+  price_to: 30000
+  band_width: 1500
+  bands_per_run: 4
+  pages_per_band: 60        # 1200 cars; raise if a band reports truncation
+  reenrich_after_days: 30   # an MFK date does not change weekly
+
+searches_autoscout24:
+  - name: "seeland-cheap"
+    # Sorting PRICE ASC keeps pagination deterministic, but it also puts the
+    # junk first: leasing monthly rates and CHF 1 placeholders land in the
+    # `price` field. A floor skips them.
+    price_from: 2200      # below this on AutoScout24 is export/scrap dealer stock
+    price_to: 5200
+    year_from: 2005
+    pages: 5
+    # seller.zipCode prefixes: 25xx Biel/Seeland, 28xx Jura, 45xx Solothurn
+    zip_prefixes: [25, 28, 45, 32]
+    # optional: pin to one model
+    # make: "seat"
+    # model: "leon"
+
+searches:
+  - name: "autos-seeland"
+    url: "https://www.tutti.ch/fr/q/voitures-moutier/Ak8CkY2Fyc5SRkqljb21wYW55QWSncHJpdmF0ZcDAkZOobG9jYXRpb26wZ2VvLWNpdHktbW91dGllcg8"
+    pages: 3
+
+# ---------------------------------------------------------------------------
+# Source adapters.
+# Fill endpoint/items_path/fields in from DevTools — see the instructions at
+# the top of radar/sources/tutti.py. Until then, use --source sample.
+# ---------------------------------------------------------------------------
+# Nothing to configure here: the adapter reads the search page itself.
+sources:
+  tutti:
+    # DISABLED. tutti sits behind Cloudflare Bot Management, which blocks
+    # datacenter IP ranges wholesale — a VPS gets HTTP 403 with a cf-ray
+    # header no matter how correct the request is. That is tutti declining
+    # cloud traffic, and it is not something to work around.
+    #
+    # Use tutti's own saved searches instead ("Enregistrer la recherche" on
+    # any results page): free email alerts on new matches. Paste the
+    # interesting ones to your bot with --listen and they get scored, stored
+    # and compared against your baseline exactly like a scraped listing.
+    enabled: false
+    url_prefix: "https://www.tutti.ch"
+    # Visit each listing's own page for km / year / make / model / fuel /
+    # gearbox. Costs one extra request per listing (at politeness.min_delay_s),
+    # so a 60-listing run takes a few minutes. Worth it: the price baseline is
+    # only as good as the mileage and year it compares on.
+    detail: true
+  anibis:
+    url_prefix: "https://www.anibis.ch"
+
+  # Listings you found by hand (Facebook Marketplace, garage tip-offs, word of
+  # mouth). They get scored and join the price baseline like anything else.
+  manual:
+    path: "manual.yaml"
+
+  # AutoScout24 — biggest car platform in CH, and the only source that states
+  # MFK status, accident history and seller type as structured fields.
+  #
+  # robots.txt checked on both hosts: www has no "User-agent: *" group (only
+  # Googlebot and grapeshot, so nothing applies to us), and api.autoscout24.ch
+  # serves no robots.txt at all. Under RFC 9309 that means no restriction.
+  # Their terms of use are a separate question and your call.
+  #
+  # Probe before crawling:  python run.py --source autoscout24 --probe
+  autoscout24:
+    enabled: true
+    # Visit each listing for lastInspectionDate / inspected / hadAccident /
+    # previousPrice. These are NOT in search results and they are the whole
+    # reason this source is worth having. One extra request per listing.
+    detail: true

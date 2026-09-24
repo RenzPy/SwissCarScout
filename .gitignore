@@ -1,0 +1,33 @@
+# secrets — never commit these
+.env
+*.env
+
+# database and WAL files
+radar.db
+radar.db-wal
+radar.db-shm
+*.db
+*.db-wal
+*.db-shm
+
+# hand-entered listings (personal data)
+manual.yaml
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.egg-info/
+
+# editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+
+# build artefacts
+dist/
+build/
+dump_*.json
