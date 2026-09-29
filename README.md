@@ -1,7 +1,5 @@
 # SwissCarScout
 
-![SwissCarScout in action](assets/readme-preview.gif)
-
 A Telegram bot and market index for flipping used cars in Switzerland.
 
 The arbitrage is simple: private sellers who underprice mechanically sound cars
@@ -50,7 +48,7 @@ or more sales tells you which way to move the discount factor.
 ### Install
 
 ```bash
-git clone https://github.com/yourusername/SwissCarScout.git
+git clone https://github.com/RenzPy/SwissCarScout.git
 cd SwissCarScout
 ./deploy/install.sh
 ```
@@ -184,6 +182,35 @@ Facebook's saved-search notifications. When something looks interesting, paste
 it to the bot.
 
 ---
+
+## Gemini model selection
+
+There is no hardcoded model. The tool asks the API which models it offers and
+picks the newest stable versioned **flash** model (today `gemini-3.8-flash`),
+never a preview, text-to-speech, image, lite or pro variant. Flash because pro's
+free-tier daily limits are far lower. The choice is cached in
+`gemini_model.json` and refreshed daily; a 404 from a retired model triggers an
+immediate re-pick and one retry.
+
+**Every change is announced on Telegram**, because a different model can
+extract and write differently and you should know when that happens. `/stats`
+shows the model actually in use and whether it's working, not merely whether a
+key is set.
+
+`GEMINI_MODEL=auto` in `.env` is the default and the recommendation. Set a
+specific name only to pin one; if it's ever retired, the tool falls back to
+auto and tells you. The selection code (`gemini_models.py`) is identical in
+job-scout and SwissCarScout.
+
+This replaced a hardcoded `gemini-2.0-flash`. When Google retired it, every AI
+call returned 404 and — because AI features fail soft by design — nothing
+visibly broke. That's the failure this exists to prevent.
+
+**Secrets never reach the logs.** The Gemini key is sent as a header, not in
+the URL. The Telegram bot token has to be in the URL (Telegram offers no
+alternative), so every error printed or sent from Telegram code goes through
+`radar/redact.py` first. A test fails if an unredacted exception is ever
+added back.
 
 ## Architecture
 

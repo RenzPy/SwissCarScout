@@ -14,6 +14,8 @@ import os
 
 import requests
 
+from .redact import redact
+
 API = "https://api.telegram.org/bot{token}/sendMessage"
 
 
@@ -39,11 +41,12 @@ class Notifier:
                 timeout=20,
             )
             if r.status_code != 200:
-                print(f"[notify] telegram error {r.status_code}: {r.text[:200]}")
+                print(f"[notify] telegram error {r.status_code}: "
+                      f"{redact(r.text[:200])}")
                 return False
             return True
         except requests.RequestException as exc:
-            print(f"[notify] telegram unreachable: {exc}")
+            print(f"[notify] telegram unreachable: {redact(exc)}")
             return False
 
 

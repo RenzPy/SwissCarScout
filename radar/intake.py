@@ -32,6 +32,7 @@ one instance.
 """
 from __future__ import annotations
 
+import html
 import os
 import re
 import threading
@@ -41,7 +42,8 @@ from datetime import date
 import requests
 
 from . import db
-from .ai import Gemini
+from .redact import redact
+from .ai import Gemini, status_line
 from .models import Listing
 from .paste import parse_pasted, to_yaml_entry
 from .scoring import score_listing
@@ -223,23 +225,39 @@ def handle_command(conn, cfg: dict, text: str) -> str | None:
             return f"Listings count as stale after {v} days"
 
     except ValueError as exc:
-        return f"⚠ {exc}"
+        return "⚠ " + html.escape(str(exc), quote=False)
 
     return None
 
 
 def _api(token: str, method: str, **payload):
+    """Call the Bot API; None on failure.
+
+    The token is in the URL, and requests' exception messages contain the
+    URL, so exceptions are always redacted before printing. On an HTTP error
+    Telegram's own description is logged instead ("can't parse entities",
+    "chat not found") -- that's the part that says what actually went wrong.
+    """
     try:
         r = requests.post(API.format(token=token, method=method),
                           json=payload, timeout=40)
-        if r.status_code == 409:
-            raise RuntimeError(
-                "Telegram says another getUpdates poller is already running "
-                "for this bot. Stop the other one, or use a second bot token.")
-        r.raise_for_status()
-        return r.json().get("result")
     except requests.RequestException as exc:
-        print(f"[listen] telegram error: {exc}")
+        print(f"[listen] telegram {method} failed: {redact(exc)}")
+        return None
+    if r.status_code == 409:
+        raise RuntimeError(
+            "Telegram says another getUpdates poller is already running "
+            "for this bot. Stop the other one, or use a second bot token.")
+    if not r.ok:
+        try:
+            detail = r.json().get("description", "")
+        except ValueError:
+            detail = r.text[:200]
+        print(f"[listen] telegram {method} HTTP {r.status_code}: {redact(detail)}")
+        return None
+    try:
+        return r.json().get("result")
+    except ValueError:
         return None
 
 
@@ -272,7 +290,7 @@ def download_photo(token: str, file_id: str) -> bytes | None:
         r.raise_for_status()
         return r.content
     except requests.RequestException as exc:
-        print(f"[listen] photo download failed: {exc}")
+        print(f"[listen] photo download failed: {redact(exc)}")
         return None
 
 
@@ -514,8 +532,9 @@ def _photo_worker(cfg: dict, token: str, chat: str,
         send(token, chat, handle_photos(conn, cfg, Gemini(), token, imgs,
                                         caption))
     except Exception as exc:
-        print(f"[listen] photo worker failed: {exc}")
-        send(token, chat, f"Couldn't process those photos: {exc}")
+        print(f"[listen] photo worker failed: {redact(exc)}")
+        send(token, chat, "Couldn't process those photos: "
+                          + html.escape(redact(exc), quote=False))
     finally:
         conn.close()
 
@@ -542,8 +561,10 @@ def listen(cfg: dict) -> None:
     offset = int(db.get_state(conn, "tg_offset", 0) or 0)
 
     register_commands(token)
-    print(f"Listening. AI extraction: {'on' if ai.available else 'off'}. "
-          f"Ctrl-C to stop.")
+    # Resolving the model here, at startup, means a retired or pinned-away
+    # model is noticed and announced on Telegram immediately -- not hours
+    # later when the first listing happens to be pasted.
+    print(f"Listening. AI: {status_line()}. Ctrl-C to stop.")
     send(token, chat, "🚗 SwissCarScout is listening. Paste a listing any time.")
 
     albums: dict = {}          # media_group_id -> {photos, caption, ts}
@@ -616,7 +637,7 @@ def listen(cfg: dict) -> None:
                 stats = {"build": f"{__version__} · {BUILD}"}
                 stats.update(db.stats(conn))
                 stats.update(db.baseline_coverage(conn))
-                stats["AI extraction"] = "on" if ai.available else "OFF"
+                stats["AI"] = status_line()
                 send(token, chat,
                      "\n".join(f"{k}: {v}" for k, v in stats.items()))
                 continue
@@ -639,5 +660,6 @@ def listen(cfg: dict) -> None:
             try:
                 send(token, chat, handle_listing(conn, cfg, ai, text))
             except Exception as exc:
-                print(f"[listen] failed: {exc}")
-                send(token, chat, f"Couldn't process that: {exc}")
+                print(f"[listen] failed: {redact(exc)}")
+                send(token, chat, "Couldn't process that: "
+                                  + html.escape(redact(exc), quote=False))
