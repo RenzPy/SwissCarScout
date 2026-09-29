@@ -38,10 +38,14 @@ from typing import Any
 
 import requests
 
+from . import gemini_models
+
 API = ("https://generativelanguage.googleapis.com/v1beta/models/"
        "{model}:generateContent")
 
-DEFAULT_MODEL = "gemini-2.0-flash"
+# No hardcoded model. gemini-2.0-flash used to sit here; Google retired it and
+# extraction and photo analysis quietly stopped working. The model is now
+# chosen from the live list -- see gemini_models.py for the rule.
 
 _EXTRACT_SYSTEM = """\
 You extract structured data from second-hand vehicle adverts in German, French,
@@ -143,14 +147,65 @@ def _clean_str(v: Any, maxlen: int = 80) -> str:
     return v.strip()[:maxlen] if isinstance(v, str) else ""
 
 
+def status_line() -> str:
+    """Whether AI actually works, not merely whether a key is set. /stats
+    said "AI extraction: on" the whole time the retired model was failing."""
+    g = Gemini()
+    if not g.key:
+        return "off — GEMINI_API_KEY not set"
+    model = g.model
+    st = gemini_models.status()
+    if not model:
+        return f"unavailable — {st['problem'] or 'no usable model'}"
+    line = f"{model} ({st['reason']}, checked {st['checked']})"
+    if st["problem"]:
+        line += f" — warning: {st['problem']}, using last known model"
+    return line
+
+
 class Gemini:
     def __init__(self, model: str | None = None):
         self.key = os.environ.get("GEMINI_API_KEY", "").strip()
-        self.model = model or os.environ.get("GEMINI_MODEL", DEFAULT_MODEL)
+        # "auto" (the default) or a specific name you want pinned. A pinned
+        # name that stops existing falls back to auto, and you're told.
+        self.preferred = model or os.environ.get("GEMINI_MODEL", "auto")
+
+    @property
+    def model(self) -> str | None:
+        if not self.key:
+            return None
+        return gemini_models.resolve(self.key, self.preferred)
 
     @property
     def available(self) -> bool:
         return bool(self.key)
+
+    def _headers(self) -> dict:
+        # The key goes in a header, never the URL. As a query parameter
+        # (?key=...) it appeared inside requests' exception messages, which
+        # were printed -- so a failed Gemini call wrote the key into journald.
+        return {"x-goog-api-key": self.key}
+
+    def _safe(self, exc) -> str:
+        text = str(exc)
+        return text.replace(self.key, "***") if self.key else text
+
+    def _post(self, body: dict, timeout: float):
+        """POST with the current model. On a 404 the model was retired:
+        refresh the list, pick again (announcing it), retry once."""
+        model = self.model
+        if not model:
+            raise RuntimeError("no Gemini model available — "
+                               + (gemini_models.status()["problem"] or "see logs"))
+        r = requests.post(API.format(model=model), headers=self._headers(),
+                          json=body, timeout=timeout)
+        if gemini_models.looks_retired(r):
+            new = gemini_models.resolve(self.key, self.preferred,
+                                        force=True, retired=model)
+            if new and new != model:
+                r = requests.post(API.format(model=new), headers=self._headers(),
+                                  json=body, timeout=timeout)
+        return r
 
     def _call(self, system: str, user: str, as_json: bool,
               timeout: float = 30.0) -> str | None:
@@ -162,9 +217,7 @@ class Gemini:
         if as_json:
             body["generationConfig"]["responseMimeType"] = "application/json"
         try:
-            r = requests.post(API.format(model=self.model),
-                              params={"key": self.key}, json=body,
-                              timeout=timeout)
+            r = self._post(body, timeout)
             if r.status_code == 429:
                 print("[ai] Gemini rate limit hit — falling back")
                 return None
@@ -172,7 +225,7 @@ class Gemini:
             data = r.json()
             return data["candidates"][0]["content"]["parts"][0]["text"]
         except Exception as exc:
-            print(f"[ai] Gemini unavailable ({exc}) — falling back")
+            print(f"[ai] Gemini unavailable ({self._safe(exc)}) — falling back")
             return None
 
     # -- job 1: extraction ------------------------------------------------
@@ -232,14 +285,13 @@ class Gemini:
             "generationConfig": {"temperature": 0.1},
         }
         try:
-            r = requests.post(API.format(model=self.model),
-                              params={"key": self.key}, json=body, timeout=90)
+            r = self._post(body, 90)
             if r.status_code == 429:
                 return "(Gemini rate limit — try again in a minute)"
             r.raise_for_status()
             return r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
         except Exception as exc:
-            print(f"[ai] photo assessment failed: {exc}")
+            print(f"[ai] photo assessment failed: {self._safe(exc)}")
             return ""
 
     # -- job 3: assessment ------------------------------------------------
